@@ -3,11 +3,10 @@ import { cookies } from 'next/headers';
 import { z } from 'zod';
 import { query } from '@/lib/db';
 import { verifyToken } from '@/lib/auth';
-import { GoogleGenAI, Type } from '@google/genai';
 
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY || 'fallback',
-});
+const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
+const GROQ_BASE_URL = 'https://api.groq.com/openai/v1';
+const GROQ_MODEL = 'llama-3.3-70b-versatile';
 
 const createFeatureRequestSchema = z.object({
   title: z.string().min(3, 'Title must be at least 3 characters'),
@@ -19,11 +18,16 @@ const createFeatureRequestSchema = z.object({
 
 const decisionJsonSchema = z.object({
   decision: z.string(),
-  priority: z.string(),
+  priority: z.union([z.string(), z.number()]),
   impact: z.object({
     revenue_impact: z.string(),
     user_impact: z.string(),
   }),
+  alignment_metrics: z.array(z.object({
+    metric: z.string(),
+    score: z.string(),
+    insight: z.string()
+  })),
   risks: z.array(z.string()),
   reason: z.string(),
 });
@@ -38,21 +42,18 @@ type FeatureRequestRow = {
   status: string;
 };
 
+type DecisionJson = z.infer<typeof decisionJsonSchema>;
+
 async function getAuthedStartupId() {
   const cookieStore = await cookies();
   const token = cookieStore.get('auth_token')?.value;
   if (!token) return null;
-
   const user = await verifyToken(token);
   if (!user?.id) return null;
-
   const startupResult = await query<{ id: string }>('SELECT id FROM startups WHERE user_id = $1 LIMIT 1', [user.id]);
   if (!startupResult.rowCount) return null;
-
   return startupResult.rows[0].id as string;
 }
-
-type DecisionJson = z.infer<typeof decisionJsonSchema>;
 
 async function ensureFeatureTables() {
   await query(`
@@ -66,7 +67,6 @@ async function ensureFeatureTables() {
       status VARCHAR(50) NOT NULL
     );
   `);
-
   await query(`
     CREATE TABLE IF NOT EXISTS feature_decisions (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -76,82 +76,117 @@ async function ensureFeatureTables() {
   `);
 }
 
-async function generateDecision(featureRequest: FeatureRequestRow, productReportJson: unknown): Promise<DecisionJson> {
-  const systemPrompt = `You are an AI Decision Engine composed of 5 specialized agents:
-1) Alignment Agent: Check alignment with product insights
-2) Impact Agent: Predict revenue impact and user impact
-3) Risk Agent: Identify risks
-4) Decision Agent: Decide Accept / Decline / Delay / Validate and explain why
-5) Priority Agent: Provide a priority score from 0 to 100
-
-Given a Feature Request and a Product Report JSON, produce an objective recommendation.
-Return ONLY valid JSON that matches the requested schema.`;
-
-  const userPrompt = `Feature Request:
-${JSON.stringify(
-    {
-      title: featureRequest.title,
-      description: featureRequest.description,
-      requested_by: featureRequest.requested_by,
-      department: featureRequest.department,
-      status: featureRequest.status,
+async function callGroq(systemPrompt: string, userPrompt: string): Promise<string> {
+  const res = await fetch(`${GROQ_BASE_URL}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${GROQ_API_KEY}`,
     },
-    null,
-    2
-  )}
-
-Product Report JSON:
-${JSON.stringify(productReportJson, null, 2)}
-`;
-
-  const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash',
-    contents: [{ text: systemPrompt }, { text: userPrompt }],
-    config: {
-      responseMimeType: 'application/json',
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          decision: { type: Type.STRING },
-          priority: { type: Type.STRING },
-          impact: {
-            type: Type.OBJECT,
-            properties: {
-              revenue_impact: { type: Type.STRING },
-              user_impact: { type: Type.STRING },
-            },
-            required: ['revenue_impact', 'user_impact'],
-          },
-          risks: { type: Type.ARRAY, items: { type: Type.STRING } },
-          reason: { type: Type.STRING },
-        },
-        required: ['decision', 'priority', 'impact', 'risks', 'reason'],
-      },
-    },
+    body: JSON.stringify({
+      model: GROQ_MODEL,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      response_format: { type: 'json_object' },
+      temperature: 0.7,
+      max_tokens: 2048,
+    }),
   });
 
-  if (!response.text) {
-    return {
-      decision: 'Validate',
-      priority: '0',
-      impact: { revenue_impact: 'unknown', user_impact: 'unknown' },
-      risks: ['No AI response received'],
-      reason: 'AI did not return a response. Validate inputs and try again.',
-    };
+  if (!res.ok) {
+    const errBody = await res.text();
+    console.error('Groq API error:', res.status, errBody);
+    if (res.status === 401) throw new Error('GROQ_401: Invalid API key');
+    if (res.status === 429) throw new Error('GROQ_429: Rate limit exceeded');
+    throw new Error(`Groq API returned ${res.status}: ${errBody}`);
   }
 
-  const parsed = decisionJsonSchema.safeParse(JSON.parse(response.text));
-  if (!parsed.success) {
-    return {
-      decision: 'Validate',
-      priority: '0',
-      impact: { revenue_impact: 'unknown', user_impact: 'unknown' },
-      risks: ['AI output did not match schema'],
-      reason: 'The decision engine produced invalid output. Validate inputs and try again.',
-    };
-  }
+  const data = await res.json();
+  const content = data.choices?.[0]?.message?.content;
+  if (!content) throw new Error('No content in Groq response');
+  return content;
+}
 
-  return parsed.data;
+function extractJson(raw: string): string {
+  let cleaned = raw.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
+  if (cleaned.startsWith('{')) return cleaned;
+  const match = cleaned.match(/\{[\s\S]*\}/);
+  if (match) return match[0];
+  return cleaned;
+}
+
+async function generateDecision(featureRequest: FeatureRequestRow, productReportJson: any): Promise<DecisionJson> {
+  const systemPrompt = `You are a Product Strategy AI for startups.
+Analyze the Feature Request against the Product Intelligence Report and return a strategic decision.
+
+You MUST respond with ONLY a valid JSON object (no markdown, no extra text):
+{
+  "decision": "Accept" | "Decline" | "Delay" | "Validate",
+  "priority": "0"-"100",
+  "impact": { "revenue_impact": "string", "user_impact": "string" },
+  "alignment_metrics": [
+    { "metric": "string", "score": "string", "insight": "string" },
+    { "metric": "string", "score": "string", "insight": "string" },
+    { "metric": "string", "score": "string", "insight": "string" }
+  ],
+  "risks": ["string", "string"],
+  "reason": "string (2-3 sentences explaining the strategic rationale)"
+}
+
+Return ONLY the JSON object.`;
+
+  const reportSummary = {
+    summary: productReportJson?.summary || productReportJson?.product_intelligence_summary || 'N/A',
+    strengths: productReportJson?.strengths || [],
+    weaknesses: productReportJson?.weaknesses || [],
+    market: productReportJson?.market_insights || [],
+    revenue: productReportJson?.revenue_insights || [],
+    score: productReportJson?.score || 0,
+  };
+
+  const userPrompt = `Feature Request:
+Title: ${featureRequest.title}
+Description: ${featureRequest.description || 'No description provided'}
+Department: ${featureRequest.department || 'General'}
+Requested By: ${featureRequest.requested_by || 'Unknown'}
+
+Product Intelligence Context:
+${JSON.stringify(reportSummary, null, 2)}`;
+
+  try {
+    console.log('--- GROQ FEATURE ANALYSIS ---');
+    const rawContent = await callGroq(systemPrompt, userPrompt);
+
+    let json: any;
+    try {
+      json = JSON.parse(extractJson(rawContent));
+    } catch (parseErr) {
+      console.error('JSON parse failed:', rawContent);
+      throw new Error(`JSON_PARSE_FAILED`);
+    }
+
+    const parsed = decisionJsonSchema.safeParse(json);
+    if (!parsed.success) {
+      console.warn('Schema validation warning — using raw data anyway:', parsed.error.issues[0]);
+      // Return raw data if schema loosely matches
+      return {
+        decision: json.decision || 'Validate',
+        priority: String(json.priority || '50'),
+        impact: json.impact || { revenue_impact: 'unknown', user_impact: 'unknown' },
+        alignment_metrics: json.alignment_metrics || [{ metric: 'Analysis', score: '50', insight: 'Based on available data' }],
+        risks: json.risks || ['Insufficient data'],
+        reason: json.reason || 'Analysis complete.',
+      };
+    }
+
+    console.log('--- GROQ FEATURE ANALYSIS SUCCESS ---');
+    return parsed.data as DecisionJson;
+  } catch (err) {
+    console.error('Groq feature analysis error:', String(err));
+    throw err;
+  }
 }
 
 export async function POST(request: Request) {
@@ -162,27 +197,25 @@ export async function POST(request: Request) {
     await ensureFeatureTables();
 
     const body = await request.json().catch(() => ({}));
-    const parsed = createFeatureRequestSchema.safeParse(body);
-    if (!parsed.success) {
-      return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
+    let featureRequest: FeatureRequestRow;
+
+    if (body.reanalyzeId) {
+      const res = await query<FeatureRequestRow>('SELECT * FROM feature_requests WHERE id = $1 AND startup_id = $2', [body.reanalyzeId, startupId]);
+      if (!res.rowCount) return NextResponse.json({ error: 'Ticket not found' }, { status: 404 });
+      featureRequest = res.rows[0];
+    } else {
+      const parsed = createFeatureRequestSchema.safeParse(body);
+      if (!parsed.success) {
+        return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
+      }
+      const { title, description, requested_by, department, status } = parsed.data;
+      const insertRes = await query<FeatureRequestRow>(
+        `INSERT INTO feature_requests (startup_id, title, description, requested_by, department, status)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+        [startupId, title, description, requested_by || null, department || null, status || 'Submitted']
+      );
+      featureRequest = insertRes.rows[0];
     }
-
-    const { title, description, requested_by, department, status } = parsed.data;
-
-    const insertRes = await query<FeatureRequestRow>(
-      `INSERT INTO feature_requests (startup_id, title, description, requested_by, department, status)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING *`,
-      [
-        startupId,
-        title,
-        description,
-        requested_by ? requested_by : null,
-        department ? department : null,
-        status || 'Submitted',
-      ]
-    );
-    const featureRequest = insertRes.rows[0];
 
     const prRes = await query<{ report_json: unknown }>(
       'SELECT report_json FROM product_reports WHERE startup_id = $1 ORDER BY created_at DESC LIMIT 1',
@@ -195,20 +228,27 @@ export async function POST(request: Request) {
         decision: 'Validate',
         priority: '0',
         impact: { revenue_impact: 'unknown', user_impact: 'unknown' },
+        alignment_metrics: [{ metric: 'Strategy Alignment', score: 'N/A', insight: 'Generate a Product Intelligence report first.' }],
         risks: ['No product report available'],
-        reason: 'Generate a Product Intelligence report first, then re-run feature analysis.',
+        reason: 'Please generate a Product Intelligence report first, then re-submit this feature for analysis.',
       };
     } else {
       try {
         decisionJson = await generateDecision(featureRequest, prRes.rows[0].report_json);
       } catch (e) {
-        const message = e instanceof Error ? e.message : 'Unknown error';
+        const msg = e instanceof Error ? e.message : String(e);
+        const lowerMsg = msg.toLowerCase();
+        const userMsg = lowerMsg.includes('groq_401') ? 'Groq API Key is invalid.'
+          : lowerMsg.includes('groq_429') ? 'Rate limit reached. Try again in a moment.'
+          : 'AI analysis failed. Please try again.';
+
         decisionJson = {
           decision: 'Validate',
           priority: '0',
           impact: { revenue_impact: 'unknown', user_impact: 'unknown' },
+          alignment_metrics: [{ metric: 'Status', score: 'Failed', insight: userMsg }],
           risks: ['AI evaluation failed'],
-          reason: message.toLowerCase().includes('api key') ? 'GEMINI_API_KEY is missing or invalid.' : 'AI evaluation failed. Try again.',
+          reason: userMsg,
         };
       }
     }
@@ -223,14 +263,10 @@ export async function POST(request: Request) {
 
     return NextResponse.json(
       { featureRequest, featureDecision: decisionRes.rows[0] },
-      { status: 201 }
+      { status: body.reanalyzeId ? 200 : 201 }
     );
   } catch (error) {
-    console.error('Feature request error:', error);
-    const code = typeof error === 'object' && error && 'code' in error ? String((error as { code: unknown }).code) : '';
-    if (code === '42P01') {
-      return NextResponse.json({ error: 'Database tables are missing. Please run scripts/init-ai.js (or restart and retry).' }, { status: 500 });
-    }
+    console.error('Feature request error:', String(error));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
@@ -248,10 +284,8 @@ export async function GET() {
        ORDER BY fr.id DESC`,
       [startupId]
     );
-
     return NextResponse.json({ featureRequests: res.rows }, { status: 200 });
   } catch (error) {
-    console.error('Fetch feature requests error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
