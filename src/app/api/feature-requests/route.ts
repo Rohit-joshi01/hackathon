@@ -54,6 +54,28 @@ async function getAuthedStartupId() {
 
 type DecisionJson = z.infer<typeof decisionJsonSchema>;
 
+async function ensureFeatureTables() {
+  await query(`
+    CREATE TABLE IF NOT EXISTS feature_requests (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      startup_id UUID REFERENCES startups(id) ON DELETE CASCADE,
+      title VARCHAR(255) NOT NULL,
+      description TEXT,
+      requested_by VARCHAR(255),
+      department VARCHAR(255),
+      status VARCHAR(50) NOT NULL
+    );
+  `);
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS feature_decisions (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      feature_id UUID UNIQUE REFERENCES feature_requests(id) ON DELETE CASCADE,
+      decision_json JSONB NOT NULL
+    );
+  `);
+}
+
 async function generateDecision(featureRequest: FeatureRequestRow, productReportJson: unknown): Promise<DecisionJson> {
   const systemPrompt = `You are an AI Decision Engine composed of 5 specialized agents:
 1) Alignment Agent: Check alignment with product insights
@@ -137,6 +159,8 @@ export async function POST(request: Request) {
     const startupId = await getAuthedStartupId();
     if (!startupId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+    await ensureFeatureTables();
+
     const body = await request.json().catch(() => ({}));
     const parsed = createFeatureRequestSchema.safeParse(body);
     if (!parsed.success) {
@@ -175,7 +199,18 @@ export async function POST(request: Request) {
         reason: 'Generate a Product Intelligence report first, then re-run feature analysis.',
       };
     } else {
-      decisionJson = await generateDecision(featureRequest, prRes.rows[0].report_json);
+      try {
+        decisionJson = await generateDecision(featureRequest, prRes.rows[0].report_json);
+      } catch (e) {
+        const message = e instanceof Error ? e.message : 'Unknown error';
+        decisionJson = {
+          decision: 'Validate',
+          priority: '0',
+          impact: { revenue_impact: 'unknown', user_impact: 'unknown' },
+          risks: ['AI evaluation failed'],
+          reason: message.toLowerCase().includes('api key') ? 'GEMINI_API_KEY is missing or invalid.' : 'AI evaluation failed. Try again.',
+        };
+      }
     }
 
     const decisionRes = await query(
@@ -192,6 +227,10 @@ export async function POST(request: Request) {
     );
   } catch (error) {
     console.error('Feature request error:', error);
+    const code = typeof error === 'object' && error && 'code' in error ? String((error as { code: unknown }).code) : '';
+    if (code === '42P01') {
+      return NextResponse.json({ error: 'Database tables are missing. Please run scripts/init-ai.js (or restart and retry).' }, { status: 500 });
+    }
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

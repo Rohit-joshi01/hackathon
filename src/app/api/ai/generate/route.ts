@@ -129,9 +129,48 @@ ${textContext ? `Text Reports Context:\n${textContext}` : ''}
             revenue_insights: { type: Type.ARRAY, items: { type: Type.STRING } },
             market_insights: { type: Type.ARRAY, items: { type: Type.STRING } },
             competitor_comparison: { type: Type.ARRAY, items: { type: Type.STRING } },
-            score: { type: Type.INTEGER }
+            score: { type: Type.INTEGER },
+            chart_data: {
+              type: Type.OBJECT,
+              properties: {
+                user_behavior_patterns: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      category: { type: Type.STRING, description: "e.g. Active Users, Churn Rate, Session Length" },
+                      value: { type: Type.INTEGER, description: "Value from 0 to 100 representing percentage or score" }
+                    },
+                    required: ["category", "value"]
+                  }
+                },
+                revenue_blockers: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      blocker: { type: Type.STRING, description: "e.g. Pricing, Checkout Drop-off, High CAC" },
+                      severity: { type: Type.INTEGER, description: "Severity from 0 to 100" }
+                    },
+                    required: ["blocker", "severity"]
+                  }
+                },
+                market_opportunities: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      segment: { type: Type.STRING, description: "e.g. Enterprise, International, SMBs" },
+                      potential: { type: Type.INTEGER, description: "Potential from 0 to 100" }
+                    },
+                    required: ["segment", "potential"]
+                  }
+                }
+              },
+              required: ["user_behavior_patterns", "revenue_blockers", "market_opportunities"]
+            }
           },
-          required: ["summary", "strengths", "weaknesses", "user_behavior", "revenue_insights", "market_insights", "competitor_comparison", "score"]
+          required: ["summary", "strengths", "weaknesses", "user_behavior", "revenue_insights", "market_insights", "competitor_comparison", "score", "chart_data"]
         }
       }
     });

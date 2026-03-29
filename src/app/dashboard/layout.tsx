@@ -1,3 +1,4 @@
+import Sidebar from '@/components/Sidebar';
 import { redirect } from 'next/navigation';
 import { cookies } from 'next/headers';
 import { verifyToken } from '@/lib/auth';
@@ -22,5 +23,10 @@ export default async function DashboardLayout({ children }: { children: React.Re
     redirect('/onboarding');
   }
 
-  return <>{children}</>;
+  return (
+    <div className="min-h-screen bg-[#FDFDFD] flex font-sans text-neutral-900">
+      <Sidebar />
+      {children}
+    </div>
+  );
 }
