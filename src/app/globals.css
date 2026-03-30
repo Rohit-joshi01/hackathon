@@ -9,10 +9,11 @@
   --border: #1F1F1F;
   --muted: #9CA3AF;
   
-  /* Reference values from image */
+  /* Additional colors from image */
   --headline: #FFFFFF;
   --body-text: #FECDCA;
   --label-text: #FECDCA;
+  --input-bg: #141414;
 }
 
 @theme inline {
@@ -23,6 +24,10 @@
   --color-accent: var(--accent);
   --color-border-subtle: var(--border);
   --color-muted: var(--muted);
+  --color-headline: var(--headline);
+  --color-body-text: var(--body-text);
+  --color-label-text: var(--label-text);
+  --color-input-bg: var(--input-bg);
   
   --radius-card: 22px;
   --font-sans: var(--font-geist-sans);

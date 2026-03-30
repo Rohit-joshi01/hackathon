@@ -42,72 +42,72 @@ export default function SignupPage() {
   };
 
   return (
-    <div>
-      <h3 className="text-xl font-semibold text-neutral-900 mb-6 text-center">Create your Castly account</h3>
-      <form onSubmit={handleSubmit} className="space-y-6">
+    <div className="space-y-8">
+      <div className="text-center">
+        <h3 className="text-2xl font-bold text-headline tracking-tight">Create Account</h3>
+        <p className="text-body-text mt-2 text-sm font-medium">Join Castly to unlock product intelligence</p>
+      </div>
+
+      <form onSubmit={handleSubmit} className="space-y-5">
         {error && (
-          <div className="bg-red-50 text-red-600 p-3 rounded-md text-sm border border-red-100">
+          <div className="bg-rose-500/10 text-rose-500 p-4 rounded-2xl text-sm border border-rose-500/20 animate-in fade-in slide-in-from-top-2">
             {error}
           </div>
         )}
         
-        <div>
-          <label className="block text-sm font-medium text-neutral-700">Full Name</label>
-          <div className="mt-1">
-            <input
-              name="name"
-              type="text"
-              required
-              className="appearance-none block w-full px-3 py-2 border border-neutral-300 rounded-md shadow-sm placeholder-neutral-400 focus:outline-none focus:ring-neutral-900 focus:border-neutral-900 sm:text-sm"
-              placeholder="Jane Doe"
-            />
-          </div>
+        <div className="space-y-2">
+          <label className="block text-xs font-bold uppercase tracking-widest text-muted ml-1">Full Name</label>
+          <input
+            name="name"
+            type="text"
+            required
+            className="block w-full px-4 py-3.5 bg-input-bg border border-border-subtle rounded-2xl text-headline placeholder-muted/50 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all text-sm font-medium"
+            placeholder="Jane Doe"
+          />
         </div>
 
-        <div>
-          <label className="block text-sm font-medium text-neutral-700">Email address</label>
-          <div className="mt-1">
-            <input
-              name="email"
-              type="email"
-              required
-              className="appearance-none block w-full px-3 py-2 border border-neutral-300 rounded-md shadow-sm placeholder-neutral-400 focus:outline-none focus:ring-neutral-900 focus:border-neutral-900 sm:text-sm"
-              placeholder="jane@startup.com"
-            />
-          </div>
+        <div className="space-y-2">
+          <label className="block text-xs font-bold uppercase tracking-widest text-muted ml-1">Email address</label>
+          <input
+            name="email"
+            type="email"
+            required
+            className="block w-full px-4 py-3.5 bg-input-bg border border-border-subtle rounded-2xl text-headline placeholder-muted/50 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all text-sm font-medium"
+            placeholder="jane@startup.com"
+          />
         </div>
 
-        <div>
-          <label className="block text-sm font-medium text-neutral-700">Password</label>
-          <div className="mt-1">
-            <input
-              name="password"
-              type="password"
-              required
-              minLength={8}
-              className="appearance-none block w-full px-3 py-2 border border-neutral-300 rounded-md shadow-sm placeholder-neutral-400 focus:outline-none focus:ring-neutral-900 focus:border-neutral-900 sm:text-sm"
-              placeholder="••••••••"
-            />
-          </div>
-          <p className="mt-1 text-xs text-neutral-500">Must be at least 8 characters.</p>
+        <div className="space-y-2">
+          <label className="block text-xs font-bold uppercase tracking-widest text-muted ml-1">Password</label>
+          <input
+            name="password"
+            type="password"
+            required
+            minLength={8}
+            className="block w-full px-4 py-3.5 bg-input-bg border border-border-subtle rounded-2xl text-headline placeholder-muted/50 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all text-sm font-medium"
+            placeholder="••••••••"
+          />
+          <p className="mt-1 text-[10px] font-bold text-muted uppercase tracking-widest ml-1">At least 8 characters</p>
         </div>
 
-        <div>
+        <div className="pt-2">
           <button
             type="submit"
             disabled={loading}
-            className="w-full flex justify-center py-2.5 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-neutral-900 hover:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-neutral-900 transition-colors disabled:opacity-70 disabled:cursor-not-allowed"
+            className="w-full flex justify-center items-center py-4 px-4 bg-primary hover:bg-primary/90 text-white rounded-2xl text-sm font-bold tracking-wide shadow-lg shadow-primary/20 transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100"
           >
-            {loading ? <Loader2 className="animate-spin h-5 w-5" /> : 'Create Account'}
+            {loading ? <Loader2 className="animate-spin h-5 w-5" /> : 'Start Building'}
           </button>
         </div>
       </form>
 
-      <div className="mt-6 text-center text-sm">
-        <span className="text-neutral-500">Already have an account? </span>
-        <Link href="/login" className="font-medium text-neutral-900 hover:text-neutral-700 transition-colors">
-          Log in
-        </Link>
+      <div className="text-center">
+        <p className="text-sm text-muted font-medium">
+          Already have an account?{' '}
+          <Link href="/login" className="text-primary hover:text-primary/80 transition-colors font-bold">
+            Log in
+          </Link>
+        </p>
       </div>
     </div>
   );
